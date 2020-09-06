@@ -1,0 +1,182 @@
+package com.proc;
+
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import org.springframework.integration.config.EnableIntegration;
+import org.springframework.integration.dsl.IntegrationFlow;
+import org.springframework.integration.dsl.IntegrationFlows;
+import org.springframework.integration.dsl.SourcePollingChannelAdapterSpec;
+import org.springframework.integration.dsl.kafka.Kafka;
+import org.springframework.integration.dsl.kafka.KafkaHighLevelConsumerMessageSourceSpec;
+
+import org.springframework.integration.dsl.support.Consumer;
+import org.springframework.integration.kafka.support.ZookeeperConnect;
+
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+
+
+
+@EnableIntegration
+@SpringBootApplication
+
+class KafkaStreamsConfiguration {
+
+
+
+    public static final String TEST_TOPIC_ID = "event-stream";
+
+
+
+    @Component
+    public static class KafkaConfig {
+
+        @Value("${kafka.topic:" + TEST_TOPIC_ID + "}")
+        private String topic;
+
+        @Value("${kafka.address:localhost:9092}")
+        private String brokerAddress;
+
+        @Value("${zookeeper.address:localhost:2181}")
+        private String zookeeperAddress;
+
+
+        KafkaConfig() {
+        }
+
+        public KafkaConfig(String t, String b, String zk) {
+            this.topic = t;
+            this.brokerAddress = b;
+            this.zookeeperAddress = zk;
+
+        }
+
+        public String getTopic() {
+            return topic;
+        }
+
+        public String getBrokerAddress() {
+            return brokerAddress;
+        }
+
+        public String getZookeeperAddress() {
+            return zookeeperAddress;
+        }
+    }
+
+
+
+    @Configuration
+    public static class ConsumerConfiguration {
+
+        @Autowired
+        private KafkaConfig kafkaConfig;
+
+        private Log log = LogFactory.getLog(getClass());
+
+        @Bean
+        IntegrationFlow consumer() {
+
+            Utils utils  = new Utils();
+            log.info("Starting Kafka Consumer..");
+            System.out.println("TOPIC: " + kafkaConfig.getTopic());
+
+            KafkaHighLevelConsumerMessageSourceSpec messageSourceSpec = Kafka.inboundChannelAdapter(
+                    new ZookeeperConnect(this.kafkaConfig.getZookeeperAddress()))
+                    .consumerProperties(props ->
+                            props.put("auto.offset.reset", "smallest")
+                                    .put("auto.commit.interval.ms", "100"))
+                    .addConsumer("myGroup", metadata -> metadata.consumerTimeout(100)
+                            .topicStreamMap(m -> m.put(this.kafkaConfig.getTopic(), 1))
+                            .maxMessages(10)
+                            .valueDecoder(String::new));
+
+            Consumer<SourcePollingChannelAdapterSpec> endpointConfigurer = e -> e.poller(p -> p.fixedDelay(100));
+
+            return IntegrationFlows
+                    .from(messageSourceSpec, endpointConfigurer)
+                    .<Map<String, List<String>>>handle((payload, headers) -> {
+                        payload.entrySet().forEach(e -> utils.parseJson(e.getValue().toString()));
+                        return null;
+                    })
+                    .get();
+        }
+    }
+}
+
+ <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka_2.10</artifactId>
+            <version>0.8.1.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-integration</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.integration</groupId>
+            <artifactId>spring-integration-kafka</artifactId>
+            <version>1.1.1.RELEASE</version>
+        </dependency>
+        <!-- https://mvnrepository.com/artifact/org.springframework.integration/spring-integration-java-dsl -->
+        <dependency>
+            <groupId>org.springframework.integration</groupId>
+            <artifactId>spring-integration-java-dsl</artifactId>
+            <version>1.1.0.RELEASE</version>
+        </dependency>
+		
+		
+		Utils.java
+		
+		package com.proc;
+
+import net.minidev.json.JSONObject;
+import net.minidev.json.JSONValue;
+
+public class Utils {
+    ClaimHistoryData parseJson(String input) {
+
+        ClaimHistoryData claimHistoryData = new ClaimHistoryData();
+
+
+        System.out.println("Inside parse json function" + input);
+        try {
+            JSONObject jsonobj = (JSONObject) JSONValue.parseWithException(input);
+            JSONObject cdr = (JSONObject) jsonobj.get("ClaimDetailRecord");
+            JSONObject cl = (JSONObject) cdr.get("ClaimLevel");
+            String dcn = (String) cl.get("DCN");
+            claimHistoryData.setDcn(dcn);
+            String ctype = (String) cl.get("claimType");
+            claimHistoryData.setCorpEntityCd(ctype);
+            String wrklistStatus =  (String) cl.get("worklistStatus");
+            claimHistoryData.setAdjstmtNbr(wrklistStatus);
+
+            System.out.println("Value of DCN: " + dcn);
+            System.out.println("Value of claim type: " + ctype);
+            System.out.println("Value of Worklist Status " + wrklistStatus);
+
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+
+
+
+        return claimHistoryData ;
+    }
+
+
+}
